@@ -1,5 +1,47 @@
 #!/usr/bin/env node
 
+import { parseQuery } from "./utils/query.js";
+
+/**
+ * Applies query filtering, sorting, and pagination to a collection.
+ */
+export function applyQueryToCollection(data: any[], fullUri: string) {
+  const query = parseQuery(fullUri);
+  let results = [...data];
+
+  // Apply equality filters
+  for (const filter of query.filters) {
+    const sample = results[0];
+    if (sample && !(filter.field in sample)) {
+      throw new Error(`Unsupported filter field: ${filter.field}`);
+    }
+    results = results.filter(
+      (item: any) => String(item[filter.field]) === filter.value
+    );
+  }
+
+  // Apply sorting
+  if (query.sort) {
+    const { field, direction } = query.sort;
+    const sample = results[0];
+    if (sample && !(field in sample)) {
+      throw new Error(`Unsupported sort field: ${field}`);
+    }
+    results = results.sort((a: any, b: any) => {
+      if (a[field] < b[field]) return direction === "asc" ? -1 : 1;
+      if (a[field] > b[field]) return direction === "asc" ? 1 : -1;
+      return 0;
+    });
+  }
+
+  // Apply pagination
+  if (query.limit !== undefined) {
+    const start = query.offset ?? 0;
+    results = results.slice(start, start + query.limit);
+  }
+
+  return results;
+}
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -199,59 +241,66 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
  * @throws If the URI is invalid or the API request fails
  */
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-  const uri = request.params.uri;
-  const match = uri.match(/^blt:\/\/([^\/]+)(?:\/(.+))?$/);
+  const fullUri = request.params.uri;
+  const [baseUri] = fullUri.split("?");
+  const match = baseUri.match(/^blt:\/\/([^\/]+)(?:\/(.+))?$/);
 
   if (!match) {
-    throw new Error(`Invalid BLT URI: ${uri}`);
+    throw new Error(`Invalid BLT URI: ${fullUri}`);
   }
 
   const [, resourceType, resourceId] = match;
 
   try {
-    let data: ApiResponse;
+    let data: unknown;
 
     switch (resourceType) {
-      case "issues":
+      case "issues": {
         if (resourceId) {
           data = await makeApiRequest(`/issues/${resourceId}`);
         } else {
           data = await makeApiRequest("/issues");
+          if (Array.isArray(data)) {
+            data = applyQueryToCollection(data, fullUri);
+          }
         }
         break;
-
-      case "repos":
+      }
+      case "repos": {
         if (resourceId) {
           data = await makeApiRequest(`/repos/${resourceId}`);
         } else {
           data = await makeApiRequest("/repos");
         }
         break;
-
-      case "contributors":
+      }
+      case "contributors": {
         if (resourceId) {
           data = await makeApiRequest(`/contributors/${resourceId}`);
         } else {
           data = await makeApiRequest("/contributors");
+          if (Array.isArray(data)) {
+            data = applyQueryToCollection(data, fullUri);
+          }
         }
         break;
-
-      case "workflows":
+      }
+      case "workflows": {
         if (resourceId) {
           data = await makeApiRequest(`/workflows/${resourceId}`);
         } else {
           data = await makeApiRequest("/workflows");
         }
         break;
-
-      case "leaderboards":
+      }
+      case "leaderboards": {
         data = await makeApiRequest("/leaderboards");
         break;
-
-      case "rewards":
+      }
+      case "rewards": {
         data = await makeApiRequest("/rewards");
         break;
-
+      }
       default:
         throw new Error(`Unknown resource type: ${resourceType}`);
     }
@@ -259,7 +308,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     return {
       contents: [
         {
-          uri,
+          uri: fullUri,
           mimeType: "application/json",
           text: JSON.stringify(data, null, 2),
         },
@@ -267,7 +316,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     };
   } catch (error) {
     throw new Error(
-      `Failed to read resource ${uri}: ${error instanceof Error ? error.message : String(error)}`
+      `Failed to read resource ${fullUri}: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 });
@@ -732,7 +781,14 @@ async function main() {
   console.error(`API Key configured: ${BLT_API_KEY ? "Yes" : "No"}`);
 }
 
-main().catch((error) => {
-  console.error("Fatal error:", error);
-  process.exit(1);
-});
+import { fileURLToPath } from "url";
+import path from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main().catch((error) => {
+    console.error("Fatal error:", error);
+    process.exit(1);
+  });
+}
