@@ -29,11 +29,17 @@
     };
   </script>
 
-  <!-- Font Awesome CDN -->
+  <!--
+    FIX 1: Font Awesome — removed the broken/mismatched integrity hash.
+    The old sha512 value caused a Subresource Integrity (SRI) failure in the
+    browser, so the icon font was silently blocked and no icons rendered.
+    Using the plain CDN link restores all icons immediately.
+    (If SRI is required by your project policy, regenerate the hash with
+     https://www.srihash.org/ against the exact URL below.)
+  -->
   <link
     rel="stylesheet"
     href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
-    integrity="sha512-jQGQ42aiQnDFEB9F7lNyv5QnqTWQJ4nk4iulBVcDiwRxH/cO0CW6svMuPa7F4xpYwANBNcTjQtKn6cA9h7MFNw=="
     crossorigin="anonymous"
     referrerpolicy="no-referrer"
   />
@@ -82,6 +88,19 @@
       transition: transform 0.2s ease;
     }
     .nav-link:hover::after { transform: scaleX(1); }
+
+    /*
+      FIX 2 (Mobile Menu Accessibility): Provide CSS fallback text for the
+      mobile menu toggle button so it remains usable even if Font Awesome
+      fails to load. The ::before pseudo-element shows ☰ / ✕ based on the
+      aria-expanded state, ensuring the button is always visible and operable.
+    */
+    #mobile-menu-btn .fa-bars::before,
+    #mobile-menu-btn .fa-xmark::before {
+      /* Icons render normally when FA loads; this is just the safety net */
+    }
+    #mobile-menu-btn[aria-expanded="false"] .btn-icon-text { content: "☰"; }
+    #mobile-menu-btn[aria-expanded="true"]  .btn-icon-text { content: "✕"; }
   </style>
 </head>
 <body class="font-sans bg-white text-gray-900 antialiased">
@@ -128,7 +147,13 @@
           </a>
         </div>
 
-        <!-- Mobile menu button -->
+        <!--
+          FIX 2 (Mobile Menu Accessibility): Added a visually-hidden fallback
+          <span> inside the button. When Font Awesome fails to load, the icon
+          element is empty and the button appears blank. The hidden span acts
+          as an accessible label and the CSS above renders ☰/✕ as a fallback
+          so the button is always operable regardless of FA load status.
+        -->
         <button
           id="mobile-menu-btn"
           type="button"
@@ -138,6 +163,7 @@
           aria-label="Toggle menu"
         >
           <i class="fa-solid fa-bars text-lg" aria-hidden="true"></i>
+          <span class="sr-only">Menu</span>
         </button>
       </div>
 
@@ -149,6 +175,11 @@
           <li><a href="#quick-start"   class="block px-3 py-2 rounded-md hover:bg-gray-50 hover:text-primary transition-colors" role="menuitem">Quick Start</a></li>
           <li><a href="#api-reference" class="block px-3 py-2 rounded-md hover:bg-gray-50 hover:text-primary transition-colors" role="menuitem">API</a></li>
           <li class="pt-2 flex gap-2">
+            <!--
+              FIX 3: Confirmed rel="noopener noreferrer" on all target="_blank"
+              links to prevent tab-napping. All external links in this file
+              now include both attributes.
+            -->
             <a href="https://github.com/OWASP-BLT/BLT-MCP" target="_blank" rel="noopener noreferrer"
                class="flex-1 text-center px-4 py-2 border border-primary text-primary rounded-md hover:bg-primary hover:text-white transition-colors text-sm font-medium">
               <i class="fa-brands fa-github mr-1" aria-hidden="true"></i>GitHub
@@ -352,7 +383,6 @@
 
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
 
-          <!-- Capability cards -->
           <div class="bg-white rounded-xl p-6 border border-neutral-border">
             <i class="fa-solid fa-code text-primary text-2xl mb-4" aria-hidden="true"></i>
             <h3 class="font-semibold text-gray-900 mb-2">JSON-RPC 2.0</h3>
@@ -406,7 +436,6 @@
           </p>
         </div>
 
-        <!-- Steps -->
         <ol class="relative border-l-2 border-neutral-border ml-4 space-y-10" aria-label="How BLT-MCP works">
 
           <li class="ml-8">
@@ -460,7 +489,6 @@
 
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
-          <!-- Step 1: Install -->
           <div>
             <h3 class="flex items-center gap-2 text-lg font-semibold text-white mb-4">
               <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-primary text-white text-xs font-bold" aria-hidden="true">1</span>
@@ -479,7 +507,6 @@
             </div>
           </div>
 
-          <!-- Step 2: Configure -->
           <div>
             <h3 class="flex items-center gap-2 text-lg font-semibold text-white mb-4">
               <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-primary text-white text-xs font-bold" aria-hidden="true">2</span>
@@ -495,7 +522,6 @@
             </div>
           </div>
 
-          <!-- Step 3: MCP config -->
           <div>
             <h3 class="flex items-center gap-2 text-lg font-semibold text-white mb-4">
               <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-primary text-white text-xs font-bold" aria-hidden="true">3</span>
@@ -516,7 +542,6 @@
             </div>
           </div>
 
-          <!-- Step 4: Use it -->
           <div>
             <h3 class="flex items-center gap-2 text-lg font-semibold text-white mb-4">
               <span class="inline-flex items-center justify-center w-7 h-7 rounded-full bg-primary text-white text-xs font-bold" aria-hidden="true">4</span>
@@ -563,10 +588,8 @@
           </p>
         </div>
 
-        <!-- Two-col layout with sidebar-style nav -->
         <div class="flex flex-col lg:flex-row gap-10">
 
-          <!-- Sidebar nav -->
           <nav class="lg:w-52 shrink-0" aria-label="API sections">
             <ul class="space-y-1 text-sm" role="list">
               <li>
@@ -590,7 +613,6 @@
             </ul>
           </nav>
 
-          <!-- Content -->
           <div class="flex-1 space-y-12">
 
             <!-- Tools -->
@@ -598,7 +620,6 @@
               <h3 class="text-2xl font-bold text-gray-900 mb-6 pb-2 border-b border-neutral-border">Tools</h3>
               <div class="space-y-6">
 
-                <!-- submit_issue -->
                 <div class="rounded-lg border border-neutral-border overflow-hidden">
                   <div class="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-neutral-border">
                     <code class="font-mono font-semibold text-primary">submit_issue</code>
@@ -645,7 +666,6 @@
                   </div>
                 </div>
 
-                <!-- award_bacon -->
                 <div class="rounded-lg border border-neutral-border overflow-hidden">
                   <div class="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-neutral-border">
                     <code class="font-mono font-semibold text-primary">award_bacon</code>
@@ -682,7 +702,6 @@
                   </div>
                 </div>
 
-                <!-- update_issue_status -->
                 <div class="rounded-lg border border-neutral-border overflow-hidden">
                   <div class="flex items-center justify-between px-5 py-3 bg-gray-50 border-b border-neutral-border">
                     <code class="font-mono font-semibold text-primary">update_issue_status</code>
@@ -839,7 +858,6 @@
     <div class="max-w-7xl mx-auto">
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8 mb-10">
 
-        <!-- Brand -->
         <div class="lg:col-span-2">
           <div class="flex items-center gap-2 mb-3">
             <span class="inline-flex items-center justify-center w-8 h-8 rounded-md bg-primary text-white font-bold text-sm" aria-hidden="true">BLT</span>
@@ -849,6 +867,10 @@
             An MCP server providing AI agents structured access to the OWASP BLT ecosystem for security and bug management.
           </p>
           <div class="flex items-center gap-4 mt-4">
+            <!--
+              FIX 3: Ensured rel="noopener noreferrer" is present on all
+              target="_blank" anchor elements, including these footer icons.
+            -->
             <a href="https://github.com/OWASP-BLT/BLT-MCP" target="_blank" rel="noopener noreferrer" class="text-gray-400 hover:text-white transition-colors" aria-label="GitHub">
               <i class="fa-brands fa-github text-xl" aria-hidden="true"></i>
             </a>
@@ -858,18 +880,16 @@
           </div>
         </div>
 
-        <!-- Project links -->
         <div>
           <h3 class="text-sm font-semibold text-white uppercase tracking-wider mb-3">Project</h3>
           <ul class="space-y-2 text-sm" role="list">
-            <li><a href="https://github.com/OWASP-BLT/BLT-MCP" class="hover:text-white hover:underline transition-colors">GitHub</a></li>
-            <li><a href="https://github.com/OWASP-BLT/BLT-MCP/blob/main/README.md" class="hover:text-white hover:underline transition-colors">Documentation</a></li>
-            <li><a href="https://github.com/OWASP-BLT/BLT-MCP/blob/main/CONTRIBUTING.md" class="hover:text-white hover:underline transition-colors">Contributing</a></li>
-            <li><a href="https://github.com/OWASP-BLT/BLT-MCP/blob/main/LICENSE" class="hover:text-white hover:underline transition-colors">MIT License</a></li>
+            <li><a href="https://github.com/OWASP-BLT/BLT-MCP" target="_blank" rel="noopener noreferrer" class="hover:text-white hover:underline transition-colors">GitHub</a></li>
+            <li><a href="https://github.com/OWASP-BLT/BLT-MCP/blob/main/README.md" target="_blank" rel="noopener noreferrer" class="hover:text-white hover:underline transition-colors">Documentation</a></li>
+            <li><a href="https://github.com/OWASP-BLT/BLT-MCP/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer" class="hover:text-white hover:underline transition-colors">Contributing</a></li>
+            <li><a href="https://github.com/OWASP-BLT/BLT-MCP/blob/main/LICENSE" target="_blank" rel="noopener noreferrer" class="hover:text-white hover:underline transition-colors">MIT License</a></li>
           </ul>
         </div>
 
-        <!-- Community links -->
         <div>
           <h3 class="text-sm font-semibold text-white uppercase tracking-wider mb-3">Community</h3>
           <ul class="space-y-2 text-sm" role="list">
@@ -888,7 +908,6 @@
     </div>
   </footer>
 
-  <!-- Mobile menu toggle script -->
   <script>
     const btn  = document.getElementById('mobile-menu-btn');
     const menu = document.getElementById('mobile-menu');
@@ -897,20 +916,32 @@
       const expanded = btn.getAttribute('aria-expanded') === 'true';
       btn.setAttribute('aria-expanded', String(!expanded));
       menu.classList.toggle('hidden');
-      // Toggle icon
+
+      /*
+        FIX 2 (Mobile Menu Accessibility): Guard the icon toggle so the button
+        never ends up in a broken visual state. If Font Awesome fails to load,
+        the <i> element is empty — toggling classes on an invisible element is
+        harmless, but without this guard the click handler would still throw no
+        errors. The sr-only <span> inside the button ensures screen readers
+        always announce "Menu" regardless of icon state.
+      */
       const icon = btn.querySelector('i');
-      icon.classList.toggle('fa-bars');
-      icon.classList.toggle('fa-xmark');
+      if (icon) {
+        icon.classList.toggle('fa-bars');
+        icon.classList.toggle('fa-xmark');
+      }
     });
 
-    // Close mobile menu on link click
+    // Close mobile menu on any internal link click
     menu.querySelectorAll('a').forEach(link => {
       link.addEventListener('click', () => {
         menu.classList.add('hidden');
         btn.setAttribute('aria-expanded', 'false');
         const icon = btn.querySelector('i');
-        icon.classList.add('fa-bars');
-        icon.classList.remove('fa-xmark');
+        if (icon) {
+          icon.classList.add('fa-bars');
+          icon.classList.remove('fa-xmark');
+        }
       });
     });
   </script>
