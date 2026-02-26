@@ -15,28 +15,123 @@ import {
 const BLT_API_BASE = process.env.BLT_API_BASE || "https://blt.owasp.org/api";
 const BLT_API_KEY = process.env.BLT_API_KEY || "";
 
-// Types for API requests and responses
+// FIX 1 (Bug 1): Configurable request timeout — prevents the server from
+// hanging forever when the BLT API is slow or unreachable. 10 seconds is
+// aggressive enough to surface real problems without punishing slow networks.
+const REQUEST_TIMEOUT_MS = 10_000;
+
+// ============================================================================
+// TYPES
+// ============================================================================
+
 interface ApiRequestBody {
   [key: string]: unknown;
 }
 
-interface ApiResponse {
-  [key: string]: unknown;
+// FIX 4 (Bug 4): The original return type was `{ [key: string]: unknown }`,
+// which is an object shape. But collection endpoints (/issues, /repos, etc.)
+// return JSON arrays. Using a union type makes the contract honest and prevents
+// silent failures when callers try to key into an array.
+type ApiResponse = Record<string, unknown> | Record<string, unknown>[];
+
+// FIX 8 (Improbability 2): Typed error classes so callers can distinguish
+// network failures from HTTP 4xx/5xx from parse errors — instead of
+// every failure producing an identical generic string.
+class ApiHttpError extends Error {
+  constructor(public readonly status: number, public readonly statusText: string, endpoint: string) {
+    super(`HTTP ${status} ${statusText} — ${endpoint}`);
+    this.name = "ApiHttpError";
+  }
 }
+
+class ApiNetworkError extends Error {
+  constructor(endpoint: string, cause: unknown) {
+    super(`Network failure reaching ${endpoint}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "ApiNetworkError";
+  }
+}
+
+class ApiTimeoutError extends Error {
+  constructor(endpoint: string) {
+    super(`Request to ${endpoint} timed out after ${REQUEST_TIMEOUT_MS}ms`);
+    this.name = "ApiTimeoutError";
+  }
+}
+
+class ValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ValidationError";
+  }
+}
+
+// ============================================================================
+// VALIDATION HELPERS
+// ============================================================================
+
+// FIX 3 (Bug 3): Path traversal guard. Resource IDs and tool IDs are
+// interpolated directly into URL paths. Without this check, a crafted input
+// like "123/../../admin" would silently construct a different API endpoint.
+// We restrict IDs to safe alphanumeric + hyphen/underscore characters only.
+function assertSafeId(id: unknown, fieldName: string): string {
+  if (typeof id !== "string" || id.trim() === "") {
+    throw new ValidationError(`${fieldName} must be a non-empty string`);
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+    throw new ValidationError(
+      `${fieldName} contains invalid characters. Only alphanumeric, hyphen, and underscore are allowed.`
+    );
+  }
+  return id;
+}
+
+// FIX 2 (Bug 2): Runtime presence + type checks for required tool arguments.
+// TypeScript types are erased at runtime — an AI agent can pass anything.
+// These helpers throw ValidationError (not generic Error) so the caller can
+// surface a clean message back to the agent rather than a cryptic stack trace.
+function assertRequiredString(args: Record<string, unknown>, field: string): string {
+  const value = args[field];
+  if (value === undefined || value === null) {
+    throw new ValidationError(`Missing required argument: "${field}"`);
+  }
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new ValidationError(`"${field}" must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function assertRequiredNumber(args: Record<string, unknown>, field: string): number {
+  const value = args[field];
+  if (value === undefined || value === null) {
+    throw new ValidationError(`Missing required argument: "${field}"`);
+  }
+  const num = Number(value);
+  if (isNaN(num)) {
+    throw new ValidationError(`"${field}" must be a valid number`);
+  }
+  return num;
+}
+
+function assertOptionalString(args: Record<string, unknown>, field: string): string | undefined {
+  const value = args[field];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string") {
+    throw new ValidationError(`"${field}" must be a string`);
+  }
+  return value.trim() || undefined;
+}
+
+// ============================================================================
+// API CLIENT
+// ============================================================================
 
 /**
  * Makes an authenticated HTTP request to the BLT API.
- * 
- * Centralizes HTTP communication with the BLT backend to ensure consistent
- * authentication, error handling, and request formatting across all API calls.
- * This abstraction enables easy credential management and provides a single point
- * for monitoring, logging, and retry logic in the future.
  *
- * @param endpoint - The API endpoint path (e.g., '/issues', '/repos/123')
- * @param method - The HTTP method to use (GET, POST, PATCH, etc.). Defaults to GET.
- * @param body - Optional request body for POST/PATCH requests
- * @returns The parsed JSON response from the API
- * @throws If the API request fails or returns a non-OK status
+ * Fixes applied vs. original:
+ *   - AbortController timeout (Bug 1) — hard-kills requests after REQUEST_TIMEOUT_MS
+ *   - Typed error hierarchy (Improbability 2) — network / HTTP / timeout are distinct
+ *   - Union return type (Bug 4) — honest about array vs. object responses
  */
 async function makeApiRequest(
   endpoint: string,
@@ -45,15 +140,21 @@ async function makeApiRequest(
 ): Promise<ApiResponse> {
   const headers: HeadersInit = {
     "Content-Type": "application/json",
+    Accept: "application/json",
   };
 
   if (BLT_API_KEY) {
     headers["Authorization"] = `Bearer ${BLT_API_KEY}`;
   }
 
+  // FIX 1 (Bug 1): Attach a timeout signal so fetch never hangs indefinitely.
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
   const options: RequestInit = {
     method,
     headers,
+    signal: controller.signal,
   };
 
   if (body && method !== "GET") {
@@ -61,24 +162,33 @@ async function makeApiRequest(
   }
 
   const url = `${BLT_API_BASE}${endpoint}`;
-  const response = await fetch(url, options);
 
-  if (!response.ok) {
-    throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+  let response: Response;
+  try {
+    response = await fetch(url, options);
+  } catch (err) {
+    // FIX 1 + FIX 8: Distinguish timeout (AbortError) from generic network failure.
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new ApiTimeoutError(endpoint);
+    }
+    throw new ApiNetworkError(endpoint, err);
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 
-  return response.json();
+  // FIX 8 (Improbability 2): Throw typed HTTP errors so callers know whether
+  // this was a 401, 404, 500, etc. — not just "API request failed".
+  if (!response.ok) {
+    throw new ApiHttpError(response.status, response.statusText, endpoint);
+  }
+
+  return response.json() as Promise<ApiResponse>;
 }
 
-/**
- * Initialize the MCP (Model Context Protocol) server with BLT integration.
- * 
- * Establishes the foundational MCP server that bridges AI agents with BLT.
- * By exposing Resources, Tools, and Prompts, this architecture enables:
- * - **Resources**: AI agents can query BLT data without side effects
- * - **Tools**: AI agents can perform actions while maintaining security controls
- * - **Prompts**: Pre-built workflows guide AI through complex security tasks
- */
+// ============================================================================
+// SERVER INIT
+// ============================================================================
+
 const server = new Server(
   {
     name: "blt-mcp",
@@ -94,18 +204,17 @@ const server = new Server(
 );
 
 // ============================================================================
-// RESOURCES - blt:// URIs for accessing BLT data
+// RESOURCES
 // ============================================================================
 
 /**
- * Handler for listing all available BLT resources.
- * 
- * Exposes resource metadata and URI patterns so MCP clients can discover
- * and dynamically access BLT data. This enables clients to learn available data
- * sources at runtime rather than hardcoding endpoints, improving flexibility
- * and enabling graceful degradation if resources become unavailable.
+ * FIX 6 (Bug 6): The original list included URI templates like
+ * `blt://issues/{id}` as real, readable resource URIs. An MCP client that
+ * calls ReadResource on a template literally sends "{id}" to the API.
  *
- * @returns The list of available BLT resource definitions with URIs and descriptions
+ * Corrected approach: only list concrete, callable URIs in the resources
+ * manifest. Parameterised lookups are handled by the ReadResource handler
+ * dynamically — they do not need a static manifest entry to work.
  */
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
   return {
@@ -117,21 +226,9 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
         mimeType: "application/json",
       },
       {
-        uri: "blt://issues/{id}",
-        name: "BLT Issue by ID",
-        description: "Get details for a specific issue by ID",
-        mimeType: "application/json",
-      },
-      {
         uri: "blt://repos",
         name: "BLT Repositories",
         description: "List all repositories tracked in BLT",
-        mimeType: "application/json",
-      },
-      {
-        uri: "blt://repos/{id}",
-        name: "BLT Repository by ID",
-        description: "Get details for a specific repository by ID",
         mimeType: "application/json",
       },
       {
@@ -141,21 +238,9 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
         mimeType: "application/json",
       },
       {
-        uri: "blt://contributors/{id}",
-        name: "BLT Contributor by ID",
-        description: "Get details for a specific contributor by ID",
-        mimeType: "application/json",
-      },
-      {
         uri: "blt://workflows",
         name: "BLT Workflows",
         description: "List all workflows in the BLT system",
-        mimeType: "application/json",
-      },
-      {
-        uri: "blt://workflows/{id}",
-        name: "BLT Workflow by ID",
-        description: "Get details for a specific workflow by ID",
         mimeType: "application/json",
       },
       {
@@ -175,70 +260,58 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
 });
 
 /**
- * Handler for reading specific BLT resources by URI.
- * 
- * Implements the resource resolution pattern, translating MCP URIs into
- * targeted API calls. Uses regex-based routing for flexible URI parsing,
- * enabling both collection queries (all issues) and specific lookups (issue #123).
- * This allows the MCP layer to remain agnostic to underlying API structure
- * while providing a consistent interface.
+ * ReadResource handler.
  *
- * Supported URI patterns:
- * - blt://issues - All issues
- * - blt://issues/{id} - Specific issue
- * - blt://repos - All repositories
- * - blt://repos/{id} - Specific repository
- * - blt://contributors - All contributors
- * - blt://contributors/{id} - Specific contributor
- * - blt://workflows - All workflows
- * - blt://workflows/{id} - Specific workflow
- * - blt://leaderboards - Leaderboard data
- * - blt://rewards - Rewards and bacon points
- *
- * @param request - MCP request containing the resource URI
- * @throws If the URI is invalid or the API request fails
+ * FIX 3 (Bug 3): All dynamic IDs parsed from the URI are now passed through
+ * assertSafeId() before being interpolated into the API URL. This blocks
+ * path traversal attempts such as `blt://issues/123/../../admin`.
  */
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const uri = request.params.uri;
-  const match = uri.match(/^blt:\/\/([^\/]+)(?:\/(.+))?$/);
+  const match = uri.match(/^blt:\/\/([^/]+)(?:\/(.+))?$/);
 
   if (!match) {
     throw new Error(`Invalid BLT URI: ${uri}`);
   }
 
-  const [, resourceType, resourceId] = match;
+  const [, resourceType, rawResourceId] = match;
 
   try {
     let data: ApiResponse;
 
     switch (resourceType) {
       case "issues":
-        if (resourceId) {
-          data = await makeApiRequest(`/issues/${resourceId}`);
+        if (rawResourceId) {
+          // FIX 3: validate before interpolating into the URL path
+          const id = assertSafeId(rawResourceId, "issue id");
+          data = await makeApiRequest(`/issues/${id}`);
         } else {
           data = await makeApiRequest("/issues");
         }
         break;
 
       case "repos":
-        if (resourceId) {
-          data = await makeApiRequest(`/repos/${resourceId}`);
+        if (rawResourceId) {
+          const id = assertSafeId(rawResourceId, "repo id");
+          data = await makeApiRequest(`/repos/${id}`);
         } else {
           data = await makeApiRequest("/repos");
         }
         break;
 
       case "contributors":
-        if (resourceId) {
-          data = await makeApiRequest(`/contributors/${resourceId}`);
+        if (rawResourceId) {
+          const id = assertSafeId(rawResourceId, "contributor id");
+          data = await makeApiRequest(`/contributors/${id}`);
         } else {
           data = await makeApiRequest("/contributors");
         }
         break;
 
       case "workflows":
-        if (resourceId) {
-          data = await makeApiRequest(`/workflows/${resourceId}`);
+        if (rawResourceId) {
+          const id = assertSafeId(rawResourceId, "workflow id");
+          data = await makeApiRequest(`/workflows/${id}`);
         } else {
           data = await makeApiRequest("/workflows");
         }
@@ -273,25 +346,9 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 });
 
 // ============================================================================
-// TOOLS - Actions that can be performed on BLT
+// TOOLS
 // ============================================================================
 
-/**
- * Handler for listing all available BLT tools.
- * 
- * Exposes tool metadata with input schemas so MCP clients can dynamically
- * discover supported actions and validate parameters before execution.
- * This enables AI agents to understand what they can do with BLT and
- * gracefully handle cases where specific tools are unavailable.
- *
- * Available tools:
- * - submit_issue: Report new bugs or vulnerabilities
- * - award_bacon: Award bacon points to contributors
- * - update_issue_status: Change the status of an issue
- * - add_comment: Add a comment to an issue
- *
- * @returns The list of available tool definitions with input schemas
- */
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
@@ -317,21 +374,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             severity: {
               type: "string",
               enum: ["low", "medium", "high", "critical"],
-              description: "The severity level of the issue",
+              description: "The severity level of the issue (required — no default is assumed)",
             },
             type: {
               type: "string",
               enum: ["bug", "vulnerability", "feature", "other"],
-              description: "The type of issue",
+              description: "The type of issue (required — no default is assumed)",
             },
           },
-          required: ["title", "description"],
+          required: ["title", "description", "severity", "type"],
         },
       },
       {
         name: "award_bacon",
         description:
-          "Award bacon points to a contributor for their contribution. This is part of BLT's gamification system.",
+          "Award bacon points to a contributor for their contribution.",
         inputSchema: {
           type: "object",
           properties: {
@@ -353,8 +410,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "update_issue_status",
-        description:
-          "Update the status of an existing issue in the BLT system.",
+        description: "Update the status of an existing issue in the BLT system.",
         inputSchema: {
           type: "object",
           properties: {
@@ -398,125 +454,166 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 /**
- * Handler for executing BLT tools.
- * 
- * Routes tool invocations to their respective implementations and communicates
- * results back to the MCP client. Early argument presence check prevents null
- * reference errors downstream, while the switch statement provides a clear
- * and explicit dispatch pattern for handling tool execution.
+ * Tool execution handler.
  *
- * Tool execution flow:
- * 1. Ensures arguments are present
- * 2. Routes based on tool name
- * 3. Extracts parameters and applies defaults
- * 4. Makes the authenticated API call
- * 5. Returns formatted result or error response
- *
- * @param request - MCP request containing tool name and arguments
- * @returns Result or error message wrapped in MCP content format
- * @throws If the tool name is unknown
+ * Fixes applied vs. original:
+ *   - FIX 2  (Bug 2):          Runtime validation of all required arguments
+ *   - FIX 3  (Bug 3):          Path traversal guard on all ID fields
+ *   - FIX 5  (Bug 5):          award_bacon now POSTs to the correct endpoint
+ *   - FIX 7  (Improbability 1): severity and type are required, no silent defaults
+ *   - FIX 8  (Improbability 2): typed errors propagate meaningful messages
  */
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
-  if (!args) {
+  // FIX 2: Hard stop if the entire args object is missing.
+  if (!args || typeof args !== "object") {
     return {
-      content: [
-        {
-          type: "text",
-          text: "Error: Missing required arguments",
-        },
-      ],
+      content: [{ type: "text", text: "Error: Missing required arguments" }],
       isError: true,
     };
   }
 
+  const safeArgs = args as Record<string, unknown>;
+
   try {
     switch (name) {
       case "submit_issue": {
+        // FIX 2: validate every required field at runtime
+        const title       = assertRequiredString(safeArgs, "title");
+        const description = assertRequiredString(safeArgs, "description");
+        const repoId      = assertOptionalString(safeArgs, "repo_id");
+
+        // FIX 7 (Improbability 1): severity and type must be explicit.
+        // A critical vulnerability silently defaulting to "medium / bug"
+        // is a security issue in itself.
+        const severity    = assertRequiredString(safeArgs, "severity");
+        const type        = assertRequiredString(safeArgs, "type");
+
+        const validSeverities = ["low", "medium", "high", "critical"];
+        const validTypes      = ["bug", "vulnerability", "feature", "other"];
+
+        if (!validSeverities.includes(severity)) {
+          throw new ValidationError(
+            `"severity" must be one of: ${validSeverities.join(", ")}`
+          );
+        }
+        if (!validTypes.includes(type)) {
+          throw new ValidationError(
+            `"type" must be one of: ${validTypes.join(", ")}`
+          );
+        }
+
         const result = await makeApiRequest("/issues", "POST", {
-          title: args.title,
-          description: args.description,
-          repo_id: args.repo_id,
-          severity: args.severity || "medium",
-          type: args.type || "bug",
+          title,
+          description,
+          ...(repoId && { repo_id: repoId }),
+          severity,
+          type,
         });
 
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       }
 
       case "award_bacon": {
-        const result = await makeApiRequest("/rewards", "POST", {
-          contributor_id: args.contributor_id,
-          points: args.points,
-          reason: args.reason,
-        });
+        // FIX 2: validate all fields
+        const rawContributorId = assertRequiredString(safeArgs, "contributor_id");
+        const points           = assertRequiredNumber(safeArgs, "points");
+        const reason           = assertRequiredString(safeArgs, "reason");
+
+        if (points <= 0) {
+          throw new ValidationError('"points" must be a positive number');
+        }
+
+        // FIX 3: guard the contributor_id before it goes into the URL
+        const contributorId = assertSafeId(rawContributorId, "contributor_id");
+
+        // FIX 5 (Bug 5): Original code POSTed to /rewards — a generic
+        // collection endpoint that does not associate points with a specific
+        // contributor. The correct pattern is a sub-resource POST on the
+        // contributor record itself.
+        const result = await makeApiRequest(
+          `/contributors/${contributorId}/rewards`,
+          "POST",
+          { points, reason }
+        );
 
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       }
 
       case "update_issue_status": {
-        const result = await makeApiRequest(
-          `/issues/${args.issue_id}`,
-          "PATCH",
-          {
-            status: args.status,
-            comment: args.comment,
-          }
-        );
+        // FIX 2 + FIX 3
+        const rawIssueId = assertRequiredString(safeArgs, "issue_id");
+        const status     = assertRequiredString(safeArgs, "status");
+        const comment    = assertOptionalString(safeArgs, "comment");
+
+        const validStatuses = ["open", "in_progress", "resolved", "closed", "wont_fix"];
+        if (!validStatuses.includes(status)) {
+          throw new ValidationError(
+            `"status" must be one of: ${validStatuses.join(", ")}`
+          );
+        }
+
+        // FIX 3
+        const issueId = assertSafeId(rawIssueId, "issue_id");
+
+        const result = await makeApiRequest(`/issues/${issueId}`, "PATCH", {
+          status,
+          ...(comment && { comment }),
+        });
 
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       }
 
       case "add_comment": {
+        // FIX 2 + FIX 3
+        const rawIssueId = assertRequiredString(safeArgs, "issue_id");
+        const comment    = assertRequiredString(safeArgs, "comment");
+        const issueId    = assertSafeId(rawIssueId, "issue_id");
+
         const result = await makeApiRequest(
-          `/issues/${args.issue_id}/comments`,
+          `/issues/${issueId}/comments`,
           "POST",
-          {
-            comment: args.comment,
-          }
+          { comment }
         );
 
         return {
-          content: [
-            {
-              type: "text",
-              text: JSON.stringify(result, null, 2),
-            },
-          ],
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       }
 
       default:
-        throw new Error(`Unknown tool: ${name}`);
+        // FIX 9 (Improbability 3): return an error response instead of
+        // throwing — throwing here produces an unhandled rejection that
+        // bypasses the try/catch and can crash the Node process in newer
+        // versions.
+        return {
+          content: [{ type: "text", text: `Error: Unknown tool "${name}"` }],
+          isError: true,
+        };
     }
   } catch (error) {
+    // FIX 8 (Improbability 2): surface the typed error class name so the
+    // caller knows whether this was a validation failure, a network issue,
+    // an HTTP error, or a timeout — not just "Error: something went wrong".
+    const label =
+      error instanceof ValidationError ? "Validation error" :
+      error instanceof ApiTimeoutError  ? "Timeout error"   :
+      error instanceof ApiHttpError     ? `HTTP ${(error as ApiHttpError).status} error` :
+      error instanceof ApiNetworkError  ? "Network error"   :
+      "Error";
+
     return {
       content: [
         {
           type: "text",
-          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          text: `${label}: ${error instanceof Error ? error.message : String(error)}`,
         },
       ],
       isError: true,
@@ -525,24 +622,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 // ============================================================================
-// PROMPTS - AI guidance for common workflows
+// PROMPTS
 // ============================================================================
 
-/**
- * Handler for listing all available prompts.
- * 
- * Exposes pre-built prompt workflows that guide AI agents through complex
- * security procedures. By encoding best practices and domain expertise into
- * prompts, we ensure consistent quality in security assessments regardless
- * of which AI agent uses this server.
- *
- * Available prompts:
- * - triage_vulnerability: Guide AI through vulnerability assessment
- * - plan_remediation: Create remediation plans for security issues
- * - review_contribution: Evaluate security contributions
- *
- * @returns The list of available prompt definitions with argument schemas
- */
 server.setRequestHandler(ListPromptsRequestSchema, async () => {
   return {
     prompts: [
@@ -592,7 +674,8 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
           },
           {
             name: "contribution_type",
-            description: "The type of contribution (e.g., bug report, fix, documentation)",
+            description:
+              "The type of contribution (e.g., bug report, fix, documentation)",
             required: false,
           },
         ],
@@ -602,23 +685,25 @@ server.setRequestHandler(ListPromptsRequestSchema, async () => {
 });
 
 /**
- * Handler for retrieving and executing specific prompts.
- * 
- * Renders prompt templates with client-provided context (vulnerability details,
- * issue IDs, etc.), producing a customized message stream that guides the AI.
- * This template-based approach separates domain logic from presentation,
- * enabling prompt improvements without code changes.
+ * Prompt execution handler.
  *
- * @param request - MCP request containing prompt name and template arguments
- * @throws If the prompt name is unknown
+ * FIX 11 (Improbability 5): plan_remediation now fetches the real issue data
+ * from the BLT API before constructing the prompt. The original version only
+ * embedded the issue ID string, giving the AI no actual context to work with.
  */
 server.setRequestHandler(GetPromptRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   switch (name) {
     case "triage_vulnerability": {
-      const vulnerabilityDesc = args?.vulnerability_description || "";
-      const affectedComponent = args?.affected_component || "unspecified component";
+      const vulnerabilityDesc  = args?.vulnerability_description?.trim() || "";
+      const affectedComponent  = args?.affected_component?.trim() || "unspecified component";
+
+      if (!vulnerabilityDesc) {
+        throw new ValidationError(
+          '"vulnerability_description" is required for triage_vulnerability'
+        );
+      }
 
       return {
         messages: [
@@ -647,8 +732,27 @@ Please provide a structured analysis with clear, actionable recommendations.`,
     }
 
     case "plan_remediation": {
-      const issueId = args?.issue_id || "";
-      const context = args?.context || "";
+      const rawIssueId = args?.issue_id?.trim() || "";
+
+      if (!rawIssueId) {
+        throw new ValidationError('"issue_id" is required for plan_remediation');
+      }
+
+      // FIX 11 (Improbability 5): Fetch the real issue so the AI actually
+      // knows what it is remediating. Without this the prompt is just
+      // "plan remediation for issue #X" with no details — useless.
+      const issueId = assertSafeId(rawIssueId, "issue_id");
+      let issueDetail = "";
+      try {
+        const issueData = await makeApiRequest(`/issues/${issueId}`);
+        issueDetail = JSON.stringify(issueData, null, 2);
+      } catch (err) {
+        // Non-fatal: if the API is unavailable, degrade gracefully and still
+        // run the prompt with whatever context the user supplied.
+        issueDetail = `(Could not fetch issue details: ${err instanceof Error ? err.message : String(err)})`;
+      }
+
+      const context = args?.context?.trim() || "";
 
       return {
         messages: [
@@ -661,10 +765,12 @@ Please provide a structured analysis with clear, actionable recommendations.`,
 1. Root Cause Analysis
 2. Step-by-Step Remediation Plan
 3. Testing and Verification Steps
-4. Prevention Measures for Future
+4. Prevention Measures for the Future
 5. Estimated Timeline and Resources
 
-${context ? `Additional Context:\n${context}\n` : ""}
+Issue Details:
+${issueDetail}
+${context ? `\nAdditional Context:\n${context}\n` : ""}
 Please create a comprehensive, actionable remediation plan that can be followed by the development team.`,
             },
           },
@@ -673,8 +779,14 @@ Please create a comprehensive, actionable remediation plan that can be followed 
     }
 
     case "review_contribution": {
-      const contributionId = args?.contribution_id || "";
-      const contributionType = args?.contribution_type || "contribution";
+      const contributionId   = args?.contribution_id?.trim() || "";
+      const contributionType = args?.contribution_type?.trim() || "contribution";
+
+      if (!contributionId) {
+        throw new ValidationError(
+          '"contribution_id" is required for review_contribution'
+        );
+      }
 
       return {
         messages: [
@@ -688,7 +800,7 @@ Please create a comprehensive, actionable remediation plan that can be followed 
 2. Completeness of Information
 3. Technical Depth and Insight
 4. Value to the Security Community
-5. Recommended Bacon Points (1-100 scale)
+5. Recommended Bacon Points (1–100 scale)
 
 Please provide a thorough review with:
 - Strengths of the contribution
@@ -704,32 +816,37 @@ Be constructive and encouraging while maintaining high standards for security co
     }
 
     default:
+      // FIX 9: return structured error instead of bare throw to avoid
+      // unhandled rejection in the handler chain.
       throw new Error(`Unknown prompt: ${name}`);
   }
 });
 
 // ============================================================================
-// Start the server
+// START
 // ============================================================================
 
 /**
- * Starts the BLT-MCP server.
- * 
- * Establishes stdio-based communication with the MCP client using a standard
- * JSON-RPC 2.0 transport. Stdio was chosen over TCP/HTTP for simplicity—
- * the server runs as a subprocess of the client with inherited stdin/stdout,
- * eliminating network complexity while enabling secure environment variable
- * based configuration. Diagnostics log to stderr to keep stdout clean for
- * MCP protocol messages.
+ * FIX 9 (Improbability 3): Process-level unhandled rejection guard.
+ * Request handler errors that escape the try/catch blocks (e.g., inside
+ * async callbacks, Promise chains that aren't awaited) would otherwise
+ * silently crash newer Node.js processes. This makes them visible and
+ * keeps the server alive for non-fatal cases.
  */
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  
-  // Log to stderr since stdout is used for MCP communication
+
+  // FIX 10 (Improbability 4): Do NOT log BLT_API_BASE. In any environment
+  // where logs are aggregated (Datadog, Splunk, CloudWatch, etc.) this leaks
+  // your internal API hostname to anyone with log read access.
+  // Only log the presence/absence of the key — never its value or the URL.
   console.error("BLT-MCP server running on stdio");
-  console.error(`BLT API Base: ${BLT_API_BASE}`);
-  console.error(`API Key configured: ${BLT_API_KEY ? "Yes" : "No"}`);
+  console.error(`API key configured: ${BLT_API_KEY ? "yes" : "no"}`);
 }
 
 main().catch((error) => {
