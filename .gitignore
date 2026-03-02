@@ -5,4 +5,3 @@ dist/
 .DS_Store
 test-server.js
 *.tgz
-package-lock.json
