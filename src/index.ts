@@ -64,7 +64,25 @@ async function makeApiRequest(
   const response = await fetch(url, options);
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+    let errorMessage = `${response.status} ${response.statusText}`;
+    
+    try{
+      const text = await response.text();
+
+      try {
+        const parsed = JSON.parse(text);
+        errorMessage = JSON.stringify(parsed);
+      } catch {
+        // not JSON, use raw text
+        if (text) {
+          errorMessage = text;
+        }
+      }
+    } catch {
+      // ignore 
+    }
+
+    throw new Error(`API request failed: ${errorMessage}`);
   }
 
   return response.json();
