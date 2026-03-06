@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { parseQuery } from "./query.js";
+import { applyQueryToCollection } from "../index.js";
 
 /* --- Filters --- */
 
@@ -91,70 +92,6 @@ const issueAllowedFields = new Set([
   "status",
   "created_at",
 ]);
-
-function applyQueryToCollection<T extends Record<string, unknown>>(
-  data: T[],
-  fullUri: string,
-  allowedFields: ReadonlySet<string>
-): T[] {
-  const query = parseQuery(fullUri);
-  let results = [...data];
-
-  for (const filter of query.filters) {
-    if (!allowedFields.has(filter.field)) {
-      throw new Error(`Unsupported filter field: ${filter.field}`);
-    }
-  }
-
-  if (query.sort && !allowedFields.has(query.sort.field)) {
-    throw new Error(`Unsupported sort field: ${query.sort.field}`);
-  }
-
-  for (const filter of query.filters) {
-    results = results.filter(
-      (item) =>
-        Object.prototype.hasOwnProperty.call(item, filter.field) &&
-        String(item[filter.field]) === filter.value
-    );
-  }
-
-  if (!query.sort && (query.limit !== undefined || query.offset !== undefined)) {
-    results = results.sort((a, b) =>
-      String(a.id ?? "").localeCompare(String(b.id ?? ""), undefined, {
-        numeric: true,
-      })
-    );
-  }
-
-  if (query.sort) {
-    const { field, direction } = query.sort;
-    results = results.sort((a, b) => {
-      const av = a?.[field];
-      const bv = b?.[field];
-
-      let cmp = 0;
-      if (typeof av === "number" && typeof bv === "number") {
-        cmp = av - bv;
-      } else {
-        cmp = String(av ?? "").localeCompare(String(bv ?? ""), undefined, {
-          numeric: true,
-        });
-      }
-
-      if (cmp < 0) return direction === "asc" ? -1 : 1;
-      if (cmp > 0) return direction === "asc" ? 1 : -1;
-      return 0;
-    });
-  }
-
-  if (query.limit !== undefined || query.offset !== undefined) {
-    const start = query.offset ?? 0;
-    const end = query.limit !== undefined ? start + query.limit : undefined;
-    results = results.slice(start, end);
-  }
-
-  return results;
-}
 
 type Issue = {
   id: number;
