@@ -1,6 +1,31 @@
 #!/usr/bin/env node
 
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
+  ListToolsRequestSchema,
+  ReadResourceRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { parseQuery } from "./utils/query.js";
+
+const ALLOWED_QUERY_FIELDS = new Set([
+  "id",
+  "title",
+  "description",
+  "severity",
+  "status",
+  "type",
+  "repo_id",
+  "created_at",
+  "updated_at",
+  "points",
+  "activity",
+  "contributor_id",
+]);
 
 /**
  * Applies query filtering, sorting, and pagination to a collection.
@@ -9,27 +34,42 @@ export function applyQueryToCollection(data: any[], fullUri: string) {
   const query = parseQuery(fullUri);
   let results = [...data];
 
-  // Apply equality filters
+  // Validate query fields up-front to avoid prototype-chain lookups.
   for (const filter of query.filters) {
-    const sample = results[0];
-    if (sample && !(filter.field in sample)) {
+    if (!ALLOWED_QUERY_FIELDS.has(filter.field)) {
       throw new Error(`Unsupported filter field: ${filter.field}`);
     }
+  }
+
+  if (query.sort && !ALLOWED_QUERY_FIELDS.has(query.sort.field)) {
+    throw new Error(`Unsupported sort field: ${query.sort.field}`);
+  }
+
+  // Apply equality filters
+  for (const filter of query.filters) {
     results = results.filter(
-      (item: any) => String(item[filter.field]) === filter.value
+      (item: any) =>
+        Object.prototype.hasOwnProperty.call(item, filter.field) &&
+        String(item[filter.field]) === filter.value
+    );
+  }
+
+  // If pagination is requested without explicit sort, apply stable default sort by id.
+  if (!query.sort && query.limit !== undefined) {
+    results = results.sort((a: any, b: any) =>
+      String(a?.id ?? "").localeCompare(String(b?.id ?? ""))
     );
   }
 
   // Apply sorting
   if (query.sort) {
     const { field, direction } = query.sort;
-    const sample = results[0];
-    if (sample && !(field in sample)) {
-      throw new Error(`Unsupported sort field: ${field}`);
-    }
     results = results.sort((a: any, b: any) => {
-      if (a[field] < b[field]) return direction === "asc" ? -1 : 1;
-      if (a[field] > b[field]) return direction === "asc" ? 1 : -1;
+      const av = a?.[field];
+      const bv = b?.[field];
+
+      if (av < bv) return direction === "asc" ? -1 : 1;
+      if (av > bv) return direction === "asc" ? 1 : -1;
       return 0;
     });
   }
@@ -42,20 +82,14 @@ export function applyQueryToCollection(data: any[], fullUri: string) {
 
   return results;
 }
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListResourcesRequestSchema,
-  ListToolsRequestSchema,
-  ReadResourceRequestSchema,
-  ListPromptsRequestSchema,
-  GetPromptRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 
 // BLT API configuration
 const BLT_API_BASE = process.env.BLT_API_BASE || "https://blt.owasp.org/api";
 const BLT_API_KEY = process.env.BLT_API_KEY || "";
+
+if (!BLT_API_BASE.startsWith("https://")) {
+  throw new Error(`BLT_API_BASE must be an HTTPS URL, got: ${BLT_API_BASE}`);
+}
 
 // Types for API requests and responses
 interface ApiRequestBody {

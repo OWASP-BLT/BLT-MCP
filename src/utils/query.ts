@@ -39,8 +39,8 @@ export interface ParsedQuery {
  * @returns ParsedQuery object
  */
 export function parseQuery(uri: string): ParsedQuery {
-  // Defensive query parsing: handles URIs with no query or multiple '?'
-  const queryString = uri.split("?")[1] ?? "";
+  // Preserve everything after the first '?' to avoid silently dropping params.
+  const queryString = uri.split("?").slice(1).join("?") ?? "";
 
   const filters: QueryFilter[] = [];
   let sort: QuerySort | undefined;

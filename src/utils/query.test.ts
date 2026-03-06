@@ -75,4 +75,12 @@ assert.deepStrictEqual(q.sort, {
 assert.strictEqual(q.limit, undefined);
 assert.strictEqual(q.offset, 10);
 
+/* Edge case: additional '?' becomes part of the value */
+
+q = parseQuery("blt://issues?severity=high?extra=dropped");
+
+assert.deepStrictEqual(q.filters, [
+  { field: "severity", operator: "=", value: "high?extra=dropped" },
+]);
+
 console.log("✅ query tests passed");
