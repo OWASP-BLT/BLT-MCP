@@ -124,9 +124,18 @@ export function applyQueryToCollection(
 // BLT API configuration
 const BLT_API_BASE = process.env.BLT_API_BASE || "https://blt.owasp.org/api";
 const BLT_API_KEY = process.env.BLT_API_KEY || "";
+const ALLOWED_BLT_ORIGIN = "https://blt.owasp.org";
 
-if (!BLT_API_BASE.startsWith("https://")) {
-  throw new Error(`BLT_API_BASE must be an HTTPS URL, got: ${BLT_API_BASE}`);
+// Validate BLT_API_BASE is from an allowlisted origin
+try {
+  const urlObj = new URL(BLT_API_BASE);
+  if (urlObj.origin !== ALLOWED_BLT_ORIGIN) {
+    throw new Error(`BLT_API_BASE origin not allowlisted: ${urlObj.origin}`);
+  }
+} catch (err) {
+  throw new Error(
+    `Invalid BLT_API_BASE URL: ${err instanceof Error ? err.message : String(err)}`
+  );
 }
 
 // Types for API requests and responses
@@ -376,6 +385,9 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
         break;
       }
       case "leaderboards": {
+        if (resourceId) {
+          throw new Error("Resource does not support item lookup: leaderboards");
+        }
         data = await makeApiRequest("/leaderboards");
         if (Array.isArray(data)) {
           data = applyQueryToCollection(data, fullUri, ALLOWED_QUERY_FIELDS.leaderboards);
@@ -383,6 +395,9 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
         break;
       }
       case "rewards": {
+        if (resourceId) {
+          throw new Error("Resource does not support item lookup: rewards");
+        }
         data = await makeApiRequest("/rewards");
         if (Array.isArray(data)) {
           data = applyQueryToCollection(data, fullUri, ALLOWED_QUERY_FIELDS.rewards);
