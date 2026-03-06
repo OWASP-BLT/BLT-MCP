@@ -4,16 +4,146 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
   ListResourcesRequestSchema,
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
-  ListPromptsRequestSchema,
-  GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { parseQuery } from "./utils/query.js";
+
+const ALLOWED_QUERY_FIELDS: Record<string, ReadonlySet<string>> = {
+  issues: new Set([
+    "id",
+    "title",
+    "description",
+    "severity",
+    "status",
+    "type",
+    "repo_id",
+    "created_at",
+    "updated_at",
+  ]),
+  contributors: new Set([
+    "id",
+    "points",
+    "activity",
+    "contributor_id",
+  ]),
+  repos: new Set([
+    "id",
+    "title",
+    "description",
+    "status",
+    "created_at",
+    "updated_at",
+  ]),
+  workflows: new Set([
+    "id",
+    "title",
+    "status",
+    "created_at",
+    "updated_at",
+  ]),
+  leaderboards: new Set([
+    "id",
+    "title",
+    "created_at",
+  ]),
+  rewards: new Set([
+    "id",
+    "title",
+    "points",
+    "description",
+  ]),
+};
+
+/**
+ * Applies query filtering, sorting, and pagination to a collection.
+ */
+export function applyQueryToCollection(
+  data: any[],
+  fullUri: string,
+  allowedFields: ReadonlySet<string>
+) {
+  const query = parseQuery(fullUri);
+  let results = [...data];
+
+  // Validate query fields up-front to avoid prototype-chain lookups.
+  for (const filter of query.filters) {
+    if (!allowedFields.has(filter.field)) {
+      throw new Error(`Unsupported filter field: ${filter.field}`);
+    }
+  }
+
+  if (query.sort && !allowedFields.has(query.sort.field)) {
+    throw new Error(`Unsupported sort field: ${query.sort.field}`);
+  }
+
+  // Apply equality filters
+  for (const filter of query.filters) {
+    results = results.filter(
+      (item: any) =>
+        Object.prototype.hasOwnProperty.call(item, filter.field) &&
+        String(item[filter.field]) === filter.value
+    );
+  }
+
+  // If pagination is requested without explicit sort, apply stable default sort by id.
+  if (!query.sort && (query.limit !== undefined || query.offset !== undefined)) {
+    results = results.sort((a: any, b: any) =>
+      String(a?.id ?? "").localeCompare(String(b?.id ?? ""), undefined, {
+        numeric: true,
+      })
+    );
+  }
+
+  // Apply sorting
+  if (query.sort) {
+    const { field, direction } = query.sort;
+    results = results.sort((a: any, b: any) => {
+      const av = a?.[field];
+      const bv = b?.[field];
+
+      let cmp = 0;
+      if (typeof av === "number" && typeof bv === "number") {
+        cmp = av - bv;
+      } else {
+        cmp = String(av ?? "").localeCompare(String(bv ?? ""), undefined, {
+          numeric: true,
+        });
+      }
+
+      return direction === "asc" ? cmp : -cmp;
+    });
+  }
+
+  // Apply pagination
+  if (query.limit !== undefined || query.offset !== undefined) {
+    const start = query.offset ?? 0;
+    const end = query.limit !== undefined ? start + query.limit : undefined;
+    results = results.slice(start, end);
+  }
+
+  return results;
+}
 
 // BLT API configuration
 const BLT_API_BASE = process.env.BLT_API_BASE || "https://blt.owasp.org/api";
 const BLT_API_KEY = process.env.BLT_API_KEY || "";
+const ALLOWED_BLT_ORIGIN = "https://blt.owasp.org";
+
+// Validate BLT_API_BASE is from an allowlisted origin
+try {
+  const urlObj = new URL(BLT_API_BASE);
+  if (urlObj.origin !== ALLOWED_BLT_ORIGIN) {
+    throw new Error(`BLT_API_BASE origin not allowlisted: ${urlObj.origin}`);
+  }
+} catch (err) {
+  throw new Error(
+    `Invalid BLT_API_BASE URL: ${err instanceof Error ? err.message : String(err)}`
+  );
+}
 
 // Types for API requests and responses
 interface ApiRequestBody {
@@ -199,59 +329,88 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
  * @throws If the URI is invalid or the API request fails
  */
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-  const uri = request.params.uri;
-  const match = uri.match(/^blt:\/\/([^\/]+)(?:\/(.+))?$/);
+  const fullUri = request.params.uri;
+  const [baseUri] = fullUri.split("?");
+  const match = baseUri.match(/^blt:\/\/([^\/]+)(?:\/(\w[\w-]*))?$/);
 
   if (!match) {
-    throw new Error(`Invalid BLT URI: ${uri}`);
+    throw new Error(`Invalid BLT URI: ${fullUri}`);
   }
 
-  const [, resourceType, resourceId] = match;
+  const [, resourceType, resourceId] = match as [
+    string,
+    keyof typeof ALLOWED_QUERY_FIELDS,
+    string | undefined
+  ];
 
   try {
-    let data: ApiResponse;
+    let data: unknown;
 
     switch (resourceType) {
-      case "issues":
+      case "issues": {
         if (resourceId) {
           data = await makeApiRequest(`/issues/${resourceId}`);
         } else {
           data = await makeApiRequest("/issues");
+          if (Array.isArray(data)) {
+            data = applyQueryToCollection(data, fullUri, ALLOWED_QUERY_FIELDS.issues);
+          }
         }
         break;
-
-      case "repos":
+      }
+      case "repos": {
         if (resourceId) {
           data = await makeApiRequest(`/repos/${resourceId}`);
         } else {
           data = await makeApiRequest("/repos");
+          if (Array.isArray(data)) {
+            data = applyQueryToCollection(data, fullUri, ALLOWED_QUERY_FIELDS.repos);
+          }
         }
         break;
-
-      case "contributors":
+      }
+      case "contributors": {
         if (resourceId) {
           data = await makeApiRequest(`/contributors/${resourceId}`);
         } else {
           data = await makeApiRequest("/contributors");
+          if (Array.isArray(data)) {
+            data = applyQueryToCollection(data, fullUri, ALLOWED_QUERY_FIELDS.contributors);
+          }
         }
         break;
-
-      case "workflows":
+      }
+      case "workflows": {
         if (resourceId) {
           data = await makeApiRequest(`/workflows/${resourceId}`);
         } else {
           data = await makeApiRequest("/workflows");
+          if (Array.isArray(data)) {
+            data = applyQueryToCollection(data, fullUri, ALLOWED_QUERY_FIELDS.workflows);
+          }
         }
         break;
-
-      case "leaderboards":
+      }
+      case "leaderboards": {
+        if (resourceId) {
+          throw new Error("Resource does not support item lookup: leaderboards");
+        }
         data = await makeApiRequest("/leaderboards");
+        if (Array.isArray(data)) {
+          data = applyQueryToCollection(data, fullUri, ALLOWED_QUERY_FIELDS.leaderboards);
+        }
         break;
-
-      case "rewards":
+      }
+      case "rewards": {
+        if (resourceId) {
+          throw new Error("Resource does not support item lookup: rewards");
+        }
         data = await makeApiRequest("/rewards");
+        if (Array.isArray(data)) {
+          data = applyQueryToCollection(data, fullUri, ALLOWED_QUERY_FIELDS.rewards);
+        }
         break;
-
+      }
       default:
         throw new Error(`Unknown resource type: ${resourceType}`);
     }
@@ -259,7 +418,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     return {
       contents: [
         {
-          uri,
+          uri: fullUri,
           mimeType: "application/json",
           text: JSON.stringify(data, null, 2),
         },
@@ -267,7 +426,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     };
   } catch (error) {
     throw new Error(
-      `Failed to read resource ${uri}: ${error instanceof Error ? error.message : String(error)}`
+      `Failed to read resource ${fullUri}: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 });
@@ -434,6 +593,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case "submit_issue": {
+        if (typeof args.title !== "string" || !args.title.trim()) {
+          throw new Error("title must be a non-empty string");
+        }
+        if (typeof args.description !== "string" || !args.description.trim()) {
+          throw new Error("description must be a non-empty string");
+        }
+
         const result = await makeApiRequest("/issues", "POST", {
           title: args.title,
           description: args.description,
@@ -453,6 +619,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "award_bacon": {
+        if (typeof args.contributor_id !== "string" || !args.contributor_id.trim()) {
+          throw new Error("contributor_id must be a non-empty string");
+        }
+        if (typeof args.points !== "number" || args.points <= 0) {
+          throw new Error("points must be a positive number");
+        }
+        if (typeof args.reason !== "string" || !args.reason.trim()) {
+          throw new Error("reason must be a non-empty string");
+        }
+
         const result = await makeApiRequest("/rewards", "POST", {
           contributor_id: args.contributor_id,
           points: args.points,
@@ -470,6 +646,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "update_issue_status": {
+        if (typeof args.issue_id !== "string" || !args.issue_id.trim()) {
+          throw new Error("issue_id must be a non-empty string");
+        }
+        if (typeof args.status !== "string" || !args.status.trim()) {
+          throw new Error("status must be a non-empty string");
+        }
+
         const result = await makeApiRequest(
           `/issues/${args.issue_id}`,
           "PATCH",
@@ -490,6 +673,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "add_comment": {
+        if (typeof args.issue_id !== "string" || !args.issue_id.trim()) {
+          throw new Error("issue_id must be a non-empty string");
+        }
+        if (typeof args.comment !== "string" || !args.comment.trim()) {
+          throw new Error("comment must be a non-empty string");
+        }
+
         const result = await makeApiRequest(
           `/issues/${args.issue_id}/comments`,
           "POST",
@@ -732,7 +922,14 @@ async function main() {
   console.error(`API Key configured: ${BLT_API_KEY ? "Yes" : "No"}`);
 }
 
-main().catch((error) => {
-  console.error("Fatal error:", error);
-  process.exit(1);
-});
+import { fileURLToPath } from "url";
+import path from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main().catch((error) => {
+    console.error("Fatal error:", error);
+    process.exit(1);
+  });
+}
