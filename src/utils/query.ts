@@ -10,9 +10,13 @@
  * blt://issues?severity=high&status=open&sort=-created_at&limit=10
  */
 
+/**
+ * QueryFilter: Used for equality filtering (field=value).
+ * The operator field is reserved for future extensibility (e.g., >, <, !=).
+ */
 export interface QueryFilter {
   field: string;
-  operator: "=";
+  operator: "="; // Reserved for future: >, <, !=, etc.
   value: string;
 }
 
@@ -35,12 +39,14 @@ export interface ParsedQuery {
  * @returns ParsedQuery object
  */
 export function parseQuery(uri: string): ParsedQuery {
-  const [, queryString] = uri.split("?");
+  // Defensive query parsing: handles URIs with no query or multiple '?'
+  const queryString = uri.split("?")[1] ?? "";
 
   const filters: QueryFilter[] = [];
   let sort: QuerySort | undefined;
   let limit: number | undefined;
   let offset: number | undefined;
+  const MAX_LIMIT = 100;
 
   if (!queryString) {
     return { filters };
@@ -65,7 +71,8 @@ export function parseQuery(uri: string): ParsedQuery {
     } else if (key === "limit") {
       const n = Number(value);
       if (!isNaN(n) && n > 0) {
-        limit = n;
+        // Clamp limit to MAX_LIMIT
+        limit = Math.min(n, MAX_LIMIT);
       }
     } else if (key === "offset") {
       const n = Number(value);
@@ -76,7 +83,7 @@ export function parseQuery(uri: string): ParsedQuery {
       // Default equality filter: field=value
       filters.push({
         field: key,
-        operator: "=",
+        operator: "=", // Reserved for future: >, <, !=, etc.
         value,
       });
     }
