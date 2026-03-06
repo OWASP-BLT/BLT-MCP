@@ -593,6 +593,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case "submit_issue": {
+        if (typeof args.title !== "string" || !args.title.trim()) {
+          throw new Error("title must be a non-empty string");
+        }
+        if (typeof args.description !== "string" || !args.description.trim()) {
+          throw new Error("description must be a non-empty string");
+        }
+
         const result = await makeApiRequest("/issues", "POST", {
           title: args.title,
           description: args.description,
@@ -612,6 +619,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "award_bacon": {
+        if (typeof args.contributor_id !== "string" || !args.contributor_id.trim()) {
+          throw new Error("contributor_id must be a non-empty string");
+        }
+        if (typeof args.points !== "number" || args.points <= 0) {
+          throw new Error("points must be a positive number");
+        }
+        if (typeof args.reason !== "string" || !args.reason.trim()) {
+          throw new Error("reason must be a non-empty string");
+        }
+
         const result = await makeApiRequest("/rewards", "POST", {
           contributor_id: args.contributor_id,
           points: args.points,
@@ -629,6 +646,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "update_issue_status": {
+        if (typeof args.issue_id !== "string" || !args.issue_id.trim()) {
+          throw new Error("issue_id must be a non-empty string");
+        }
+        if (typeof args.status !== "string" || !args.status.trim()) {
+          throw new Error("status must be a non-empty string");
+        }
+
         const result = await makeApiRequest(
           `/issues/${args.issue_id}`,
           "PATCH",
@@ -649,6 +673,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "add_comment": {
+        if (typeof args.issue_id !== "string" || !args.issue_id.trim()) {
+          throw new Error("issue_id must be a non-empty string");
+        }
+        if (typeof args.comment !== "string" || !args.comment.trim()) {
+          throw new Error("comment must be a non-empty string");
+        }
+
         const result = await makeApiRequest(
           `/issues/${args.issue_id}/comments`,
           "POST",
