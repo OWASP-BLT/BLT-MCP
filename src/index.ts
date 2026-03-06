@@ -105,9 +105,16 @@ export function applyQueryToCollection(
       const av = a?.[field];
       const bv = b?.[field];
 
-      if (av < bv) return direction === "asc" ? -1 : 1;
-      if (av > bv) return direction === "asc" ? 1 : -1;
-      return 0;
+      let cmp = 0;
+      if (typeof av === "number" && typeof bv === "number") {
+        cmp = av - bv;
+      } else {
+        cmp = String(av ?? "").localeCompare(String(bv ?? ""), undefined, {
+          numeric: true,
+        });
+      }
+
+      return direction === "asc" ? cmp : -cmp;
     });
   }
 
@@ -324,7 +331,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const fullUri = request.params.uri;
   const [baseUri] = fullUri.split("?");
-  const match = baseUri.match(/^blt:\/\/([^\/]+)(?:\/(.+))?$/);
+  const match = baseUri.match(/^blt:\/\/([^\/]+)(?:\/(\w[\w-]*))?$/);
 
   if (!match) {
     throw new Error(`Invalid BLT URI: ${fullUri}`);
