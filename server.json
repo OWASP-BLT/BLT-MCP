@@ -1,0 +1,31 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.OWASP-BLT/BLT-MCP",
+  "description": "MCP server providing AI agents structured access to the BLT ecosystem",
+  "status": "active",
+  "repository": {
+    "url": "https://github.com/OWASP-BLT/BLT-MCP",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "packages": [
+    {
+      "registry_type": "npm",
+      "registry_base_url": "https://registry.npmjs.org",
+      "identifier": "blt-mcp",
+      "version": "1.0.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environment_variables": [
+        {
+          "description": "BLT API key for authenticated requests",
+          "is_required": false,
+          "format": "string",
+          "is_secret": true,
+          "name": "BLT_API_KEY"
+        }
+      ]
+    }
+  ]
+}
