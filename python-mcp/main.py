@@ -18,13 +18,13 @@ BLT_API_KEY = os.getenv("BLT_API_KEY", "")
 
 server = Server("owasp-blt-mcp")
 
-async def make_api_request(endpoint: str, method: str = "GET", body: dict = None) -> Any:
+async def make_api_request(endpoint: str, method: str = "GET", body: dict | None = None) -> Any:
     """Authenticated HTTP client for BLT endpoints."""
     headers = {"Content-Type": "application/json"}
     if BLT_API_KEY:
         headers["Authorization"] = f"Bearer {BLT_API_KEY}"
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30.0) as client:
         path = endpoint if endpoint.startswith("/") else f"/{endpoint}"
         url = f"{BLT_API_BASE}{path}"
         response = await client.request(method, url, headers=headers, json=body)
@@ -41,6 +41,12 @@ async def handle_list_resources() -> list[Resource]:
             uri="blt://issues",
             name="BLT Issues",
             description="List of issues (Token-optimized)",
+            mimeType="application/json",
+        ),
+        Resource(
+            uri="blt://issues/{id}",
+            name="BLT Issue by ID",
+            description="Get details for a specific issue by ID",
             mimeType="application/json",
         ),
         Resource(
@@ -206,3 +212,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
