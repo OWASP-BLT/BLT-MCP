@@ -1,6 +1,21 @@
+
+# Python / uv
+.venv/
+__pycache__/
+.python-version
+*.pyc
+
+
+
+
+# Legacy TS
+
 node_modules/
 dist/
 *.log
 .env
 .DS_Store
 test-server.js
+
+
+
