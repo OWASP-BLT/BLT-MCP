@@ -2,32 +2,108 @@
 
 This document provides practical examples of how to use the BLT-MCP server.
 
-## Prerequisites
+> **Current Status**: A Python proof-of-concept implementation is being developed alongside the existing TypeScript server. The goal is to evaluate compatibility with the Python MCP SDK while preserving the existing BLT API integration.
 
-1. Install and build the server:
-   ```bash
-   npm install
-   npm run build
-   ```
+---
+
+# Implementation Status
+
+| Feature | TypeScript Server | Python PoC |
+|-------|-------|------|
+| Resources | ✅ | ✅ (issues only) |
+| Tools | ✅ | ✅ (`submit_issue`) |
+| Prompts | ✅ | ✅ (`triage_vulnerability`) |
+| Leaderboards | ✅ | 🚧 Planned |
+| Rewards / Bacon Points | ✅ | 🚧 Planned |
+| Workflow Management | ✅ | 🚧 Planned |
+
+The Python implementation mirrors the architecture of the TypeScript MCP server to evaluate maintainability and ecosystem compatibility.
+
+---
+
+# Prerequisites
+
+## Python Implementation (Proof of Concept)
+
+1. Install dependencies:
+
+```bash
+# Using uv (recommended)
+uv pip install -e .
+
+# Or using pip
+pip install -e .
+```
 
 2. Configure your environment:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your BLT API credentials
-   ```
 
-## Configuration Examples
+```bash
+export BLT_API_BASE="https://blt.owasp.org/api"
+export BLT_API_KEY="your_api_key_here"
+```
 
-### Claude Desktop Configuration
+Python **3.11 or higher** is recommended.
 
-Add to your Claude Desktop config file (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+---
+
+## TypeScript Implementation (Existing Server)
+
+1. Navigate to legacy directory:
+
+```bash
+cd typescript-legacy
+```
+
+2. Install dependencies:
+
+```bash
+npm install
+```
+
+3. Build the server:
+
+```bash
+npm run build
+```
+
+4. Configure your environment:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` with your BLT API credentials.
+
+---
+
+# Configuration Examples
+
+## Claude Desktop Configuration
+
+### Python Implementation (Proof of Concept)
+
+Add to your Claude Desktop config file:
+
+- **macOS**  
+  `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+- **Windows**  
+  `%APPDATA%\Claude\claude_desktop_config.json`
+
+Using **uv**:
 
 ```json
 {
   "mcpServers": {
-    "blt": {
-      "command": "node",
-      "args": ["/absolute/path/to/blt-mcp/dist/index.js"],
+    "blt-mcp-python": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "/absolute/path/to/BLT-MCP",
+        "run",
+        "python",
+        "main.py"
+      ],
       "env": {
         "BLT_API_BASE": "https://blt.owasp.org/api",
         "BLT_API_KEY": "your_api_key_here"
@@ -37,16 +113,14 @@ Add to your Claude Desktop config file (`~/Library/Application Support/Claude/cl
 }
 ```
 
-### Cline/Continue Configuration
-
-For VS Code extensions like Cline or Continue, add to your MCP settings:
+Or using **standard Python**:
 
 ```json
 {
   "mcpServers": {
-    "blt": {
-      "command": "node",
-      "args": ["/absolute/path/to/blt-mcp/dist/index.js"],
+    "blt-mcp-python": {
+      "command": "python",
+      "args": ["/absolute/path/to/BLT-MCP/main.py"],
       "env": {
         "BLT_API_BASE": "https://blt.owasp.org/api",
         "BLT_API_KEY": "your_api_key_here"
@@ -56,26 +130,95 @@ For VS Code extensions like Cline or Continue, add to your MCP settings:
 }
 ```
 
-## Usage Scenarios
+---
 
-### Scenario 1: Reporting a Vulnerability
+### TypeScript Implementation
 
-**User Query:**
+```json
+{
+  "mcpServers": {
+    "blt-legacy": {
+      "command": "node",
+      "args": ["/absolute/path/to/BLT-MCP/typescript-legacy/dist/index.js"],
+      "env": {
+        "BLT_API_BASE": "https://blt.owasp.org/api",
+        "BLT_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
 ```
-I found a SQL injection vulnerability in the user registration endpoint of repo 456. 
+
+---
+
+# Cline / Continue Configuration
+
+For VS Code extensions like **Cline** or **Continue**.
+
+## Python
+
+```json
+{
+  "mcpServers": {
+    "blt-mcp-python": {
+      "command": "python",
+      "args": ["/absolute/path/to/BLT-MCP/main.py"],
+      "env": {
+        "BLT_API_BASE": "https://blt.owasp.org/api",
+        "BLT_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+## TypeScript
+
+```json
+{
+  "mcpServers": {
+    "blt-legacy": {
+      "command": "node",
+      "args": ["/absolute/path/to/BLT-MCP/typescript-legacy/dist/index.js"],
+      "env": {
+        "BLT_API_BASE": "https://blt.owasp.org/api",
+        "BLT_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+---
+
+# Usage Scenarios
+
+> **Note:** The following scenarios demonstrate MCP interaction patterns.  
+> The Python implementation currently supports a proof-of-concept subset (1 resource, 1 tool, 1 prompt). Full feature parity is planned.
+
+---
+
+## Scenario 1: Reporting a Vulnerability
+
+**User Query**
+
+```
+I found a SQL injection vulnerability in the user registration endpoint of repo 456.
 Please submit this as a critical issue.
 ```
 
-**What Happens:**
-1. AI agent uses the `submit_issue` tool
-2. Creates issue with:
-   - Title: "SQL Injection in User Registration"
-   - Description: Details about the vulnerability
-   - Repository ID: 456
-   - Severity: critical
-   - Type: vulnerability
+**What Happens**
 
-**Expected Result:**
+1. The AI agent uses the `submit_issue` tool.
+2. It creates an issue with:
+   - Title: *SQL Injection in User Registration*
+   - Description: vulnerability details
+   - Repository ID: `456`
+   - Severity: `critical`
+   - Type: `vulnerability`
+
+**Expected Result**
+
 ```json
 {
   "id": "789",
@@ -85,177 +228,104 @@ Please submit this as a critical issue.
 }
 ```
 
-### Scenario 2: Triaging Multiple Vulnerabilities
+**Python Implementation Status:** ✅ Available
 
-**User Query:**
+---
+
+## Scenario 2: Triaging a Vulnerability
+
+**User Query**
+
 ```
-Help me triage this XSS vulnerability: 
-User input in the comment section is not properly sanitized, 
-allowing arbitrary JavaScript execution. This affects the main web application.
+Help me triage this XSS vulnerability:
+User input in the comment section is not properly sanitized,
+allowing arbitrary JavaScript execution.
 ```
 
-**What Happens:**
-1. AI agent uses the `triage_vulnerability` prompt
-2. Provides structured analysis including:
+**What Happens**
+
+1. AI agent uses the `triage_vulnerability` prompt.
+2. It generates:
    - Severity assessment
-   - Potential impact
-   - Affected systems
+   - Impact analysis
    - Mitigation recommendations
    - Priority level
 
-**Expected Response:**
-The AI provides a comprehensive security analysis with actionable recommendations.
+**Expected Response**
 
-### Scenario 3: Reviewing the Leaderboard
+The AI provides a structured vulnerability triage analysis.
 
-**User Query:**
+**Python Implementation Status:** ✅ Available
+
+---
+
+## Scenario 3: Reviewing the Leaderboard
+
+**User Query**
+
 ```
 Show me the current leaderboard standings
 ```
 
-**What Happens:**
-1. AI agent reads the `blt://leaderboards` resource
-2. Displays formatted leaderboard data
+**What Happens**
 
-**Expected Result:**
-```json
-{
-  "top_contributors": [
-    {
-      "rank": 1,
-      "username": "security_pro",
-      "bacon_points": 1250,
-      "contributions": 45
-    },
-    {
-      "rank": 2,
-      "username": "bug_hunter",
-      "bacon_points": 980,
-      "contributions": 32
-    }
-  ]
-}
+1. AI agent reads the `blt://leaderboards` resource.
+2. Displays formatted leaderboard data.
+
+**Python Implementation Status:** 🚧 Planned (TypeScript only)
+
+---
+
+## Scenario 4: Awarding Bacon Points
+
+**User Query**
+
+```
+Award 50 bacon points to contributor 123 for their security analysis
 ```
 
-### Scenario 4: Awarding Bacon Points
+**Expected Result**
 
-**User Query:**
-```
-Award 50 bacon points to contributor 123 for their excellent security analysis
-```
-
-**What Happens:**
-1. AI agent uses the `award_bacon` tool
-2. Awards points with reason
-
-**Expected Result:**
 ```json
 {
   "contributor_id": "123",
   "points_awarded": 50,
-  "new_total": 350,
-  "reason": "Excellent security analysis"
+  "new_total": 350
 }
 ```
 
-### Scenario 5: Managing Issue Workflow
+**Python Implementation Status:** 🚧 Planned (TypeScript only)
 
-**User Query:**
+---
+
+## Scenario 5: Managing Issue Workflow
+
+**User Query**
+
 ```
 Update issue 789 to resolved status and add a comment explaining the fix
 ```
 
-**What Happens:**
-1. AI agent uses `update_issue_status` tool to mark as resolved
-2. AI agent uses `add_comment` tool to add explanation
+**What Happens**
 
-**Expected Result:**
-Issue is updated and comment is added successfully.
+1. AI agent uses `update_issue_status`.
+2. AI agent uses `add_comment`.
 
-### Scenario 6: Planning Remediation
+**Python Implementation Status:** 🚧 Planned (TypeScript only)
 
-**User Query:**
-```
-Create a remediation plan for issue 789. The vulnerability is a buffer overflow 
-in the authentication module that could lead to remote code execution.
-```
+---
 
-**What Happens:**
-1. AI agent uses the `plan_remediation` prompt
-2. Generates comprehensive plan including:
-   - Root cause analysis
-   - Step-by-step remediation
-   - Testing procedures
-   - Prevention measures
-   - Timeline estimate
+# Testing the Server
 
-**Expected Response:**
-Detailed remediation plan with actionable steps.
+## Manual Testing
 
-### Scenario 7: Reviewing a Contribution
-
-**User Query:**
-```
-Review contribution 456 - it's a bug report about a memory leak
-```
-
-**What Happens:**
-1. AI agent uses the `review_contribution` prompt
-2. Evaluates quality, completeness, and value
-3. Recommends bacon point award
-
-**Expected Response:**
-- Quality assessment
-- Strengths and improvements
-- Recommended bacon points (e.g., 35 points)
-- Follow-up actions
-
-## Advanced Usage
-
-### Batch Operations
-
-You can request multiple operations in sequence:
-
-```
-1. Submit a new XSS vulnerability for repo 123
-2. Check the leaderboard to see current rankings
-3. Award 25 bacon points to the top contributor
-```
-
-The AI agent will execute each operation in order.
-
-### Querying Specific Resources
-
-Request detailed information about specific resources:
-
-```
-Show me details for issue 789
-What repositories are currently being tracked?
-Get information about contributor 456
-```
-
-### Workflow Automation
-
-Create complex workflows combining multiple tools:
-
-```
-1. Get all open issues from repo 123
-2. For critical issues, create remediation plans
-3. Update low-priority issues to triaged status
-4. Generate a summary report
-```
-
-## Testing the Server
-
-### Manual Testing
-
-You can test the server manually using stdio:
+### Python
 
 ```bash
-node dist/index.js
+python main.py
 ```
 
-Then send JSON-RPC requests via stdin. Example:
+Then send JSON-RPC requests via stdin:
 
 ```json
 {
@@ -265,55 +335,110 @@ Then send JSON-RPC requests via stdin. Example:
 }
 ```
 
-### Testing with MCP Inspector
+---
 
-Use the MCP Inspector tool to test the server:
+### TypeScript
 
 ```bash
-npx @modelcontextprotocol/inspector node dist/index.js
+cd typescript-legacy
+node dist/index.js
 ```
 
-This provides a web UI to test all resources, tools, and prompts.
+---
 
-## Troubleshooting
+# Testing with MCP Inspector
 
-### Common Issues
+### Python
 
-1. **Authentication Errors**
-   - Verify `BLT_API_KEY` is set correctly
-   - Check that the API key has proper permissions
+```bash
+npx @modelcontextprotocol/inspector -- python main.py
+```
 
-2. **Connection Issues**
-   - Verify `BLT_API_BASE` URL is correct
-   - Check network connectivity
+### TypeScript
 
-3. **Build Errors**
-   - Run `npm install` to ensure dependencies are installed
-   - Run `npm run build` to compile TypeScript
+```bash
+npx @modelcontextprotocol/inspector -- node typescript-legacy/dist/index.js
+```
 
-4. **Server Not Responding**
-   - Check that Node.js version is 18 or higher
-   - Verify the path to `dist/index.js` is correct
+---
 
-## Best Practices
+# Troubleshooting
 
-1. **Security**
-   - Never commit `.env` files with real API keys
-   - Use environment-specific API keys
-   - Regularly rotate API keys
+## Python Implementation
 
-2. **Performance**
-   - Be mindful of API rate limits
-   - Cache frequently accessed resources when possible
-   - Batch operations when appropriate
+### Module Import Errors
 
-3. **Error Handling**
-   - Always check error responses
-   - Provide context in issue descriptions
-   - Include relevant details in comments
+Install dependencies:
 
-## Additional Resources
+```bash
+uv pip install -e .
+```
 
-- [MCP Documentation](https://modelcontextprotocol.io/)
-- [OWASP BLT Project](https://owasp.org/www-project-bug-logging-tool/)
-- [BLT API Documentation](https://blt.owasp.org/api/docs)
+or
+
+```bash
+pip install -e .
+```
+
+Check Python version:
+
+```bash
+python --version
+```
+
+Python **3.11+** is recommended.
+
+---
+
+### Authentication Errors
+
+Verify the following variables are set correctly:
+
+- `BLT_API_BASE`
+- `BLT_API_KEY`
+
+Also verify the API key permissions.
+
+---
+
+### Connection Issues
+
+Verify the BLT API endpoint:
+
+```
+https://blt.owasp.org/api
+```
+
+You can test connectivity using tools like `curl` or `httpx`.
+
+---
+
+# Best Practices
+
+## Security
+
+- Never commit `.env` files containing real API keys
+- Use environment variables for credentials
+- Rotate API keys regularly
+
+## Performance
+
+- Respect API rate limits
+- Cache frequently accessed resources
+- Batch operations when possible
+
+## Error Handling
+
+- Provide clear issue descriptions
+- Include context in comments
+- Handle API failures gracefully
+
+---
+
+# Additional Resources
+
+- MCP Documentation: https://modelcontextprotocol.io/
+- MCP Python SDK: https://github.com/modelcontextprotocol/python-sdk
+- MCP TypeScript SDK: https://github.com/modelcontextprotocol/typescript-sdk
+- OWASP BLT Project: https://owasp.org/www-project-bug-logging-tool/
+- BLT API Docs: https://blt.owasp.org/api/docs

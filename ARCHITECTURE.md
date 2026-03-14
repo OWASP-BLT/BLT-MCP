@@ -1,5 +1,12 @@
 # BLT-MCP Architecture
 
+> **Implementation Status**: This architecture document describes the complete design vision for BLT-MCP. 
+> The server is currently being migrated from TypeScript to Python. The Python implementation 
+> (`main.py`) provides a proof-of-concept demonstrating all three MCP primitives 
+> (Resources, Tools, Prompts). Full feature parity is planned as the migration progresses.
+> All architectural patterns and design principles documented here are language-agnostic 
+> and apply to both implementations.
+
 This document describes the architecture and design of the BLT-MCP server implementation.
 
 ## Overview
@@ -214,7 +221,7 @@ Prompts provide AI agents with structured guidance for common tasks:
 
 ### Input Validation
 - JSON Schema validation for all tool inputs
-- Type-safe TypeScript implementation
+- Type-safe implementation (TypeScript types, Python type hints)
 - Parameter validation before API calls
 - Error messages don't leak sensitive data
 
@@ -240,6 +247,50 @@ BLT_API_KEY=your_key_here               # Authentication token
 ```
 
 ### MCP Client Configuration
+
+#### Python Implementation
+
+Using `uv` (recommended):
+
+```json
+{
+  "mcpServers": {
+    "blt-mcp-python": {
+      "command": "uv",
+      "args": [
+        "--directory", 
+        "/absolute/path/to/BLT-MCP", 
+        "run", 
+        "python", 
+        "main.py"
+      ],
+      "env": {
+        "BLT_API_BASE": "https://blt.owasp.org/api",
+        "BLT_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+Or using standard Python:
+
+```json
+{
+  "mcpServers": {
+    "blt-mcp-python": {
+      "command": "python",
+      "args": ["main.py"],
+      "env": {
+        "BLT_API_BASE": "https://blt.owasp.org/api",
+        "BLT_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+#### TypeScript Implementation (Legacy)
 
 ```json
 {
@@ -267,7 +318,7 @@ BLT_API_KEY=your_key_here               # Authentication token
 ### Validation Errors
 - Schema validation failures reported clearly
 - Missing required parameters detected early
-- Type mismatches caught by TypeScript
+- Type mismatches caught by static type checking
 - Invalid URIs handled gracefully
 
 ### Runtime Errors
@@ -318,13 +369,31 @@ BLT_API_KEY=your_key_here               # Authentication token
 
 ## Deployment
 
-### Installation
+### Python Implementation
+
+#### Installation
 ```bash
+pip install -e .
+# Or using uv (recommended)
+uv pip install -e .
+```
+
+#### Running
+```bash
+python main.py
+# Server listens on stdio
+```
+
+### TypeScript Implementation (Legacy)
+
+#### Installation
+```bash
+cd typescript-legacy
 npm install
 npm run build
 ```
 
-### Running
+#### Running
 ```bash
 node dist/index.js
 # Server listens on stdio
@@ -358,6 +427,7 @@ node dist/index.js
 ## References
 
 - [Model Context Protocol Specification](https://modelcontextprotocol.io/)
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 - [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
 - [OWASP BLT Project](https://owasp.org/www-project-bug-logging-tool/)
 - [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
