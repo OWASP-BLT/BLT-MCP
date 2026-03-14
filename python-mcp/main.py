@@ -42,7 +42,19 @@ async def handle_list_resources() -> list[Resource]:
             name="BLT Issues",
             description="List of issues (Token-optimized)",
             mimeType="application/json",
-        )
+        ),
+        Resource(
+            uri="blt://repos",
+            name="BLT Repositories",
+            description="List of repositories tracked in BLT (Token-optimized)",
+            mimeType="application/json",
+        ),
+        Resource(
+            uri="blt://repos/{id}",
+            name="BLT Repository by ID",
+            description="Get details for a specific repository by ID",
+            mimeType="application/json",
+        ),
     ]
 
 @server.read_resource()
@@ -73,7 +85,40 @@ async def handle_read_resource(uri: Any) -> list[ReadResourceContents]:
                 text=json.dumps(data, indent=2)
             )
         ]
-    
+
+    if resource_type == "repos":
+        if resource_id:
+            if not re.match(r"^[A-Za-z0-9_-]+$", resource_id):
+                raise ValueError("Invalid resource ID")
+            raw = await make_api_request(f"/repos/{resource_id}")
+            data = {
+                "id": raw.get("id"),
+                "name": raw.get("name"),
+                "slug": raw.get("slug"),
+                "description": raw.get("description"),
+                "open_issues": raw.get("open_issues"),
+                "url": raw.get("url"),
+            }
+        else:
+            raw_data = await make_api_request("/repos?limit=20")
+            data = [
+                {
+                    "id": r.get("id"),
+                    "name": r.get("name"),
+                    "slug": r.get("slug"),
+                    "open_issues": r.get("open_issues"),
+                }
+                for r in raw_data
+            ]
+
+        return [
+            ReadResourceContents(
+                uri=uri_str,
+                mimeType="application/json",
+                text=json.dumps(data, indent=2)
+            )
+        ]
+
     raise ValueError(f"Unknown resource type: {resource_type}")
 
 # --- TOOLS ---
